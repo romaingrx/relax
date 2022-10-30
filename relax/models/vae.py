@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2022 October 14, 10:08:57
-@last modified : 2022 October 23, 23:00:30
+@last modified : 2022 October 27, 10:50:03
 """
 
 import jax
@@ -13,6 +13,7 @@ import haiku as hk
 
 from typing import Optional
 from dataclasses import dataclass
+
 
 @dataclass
 class VAE(hk.Module):
@@ -34,15 +35,14 @@ class VAE(hk.Module):
 
     @staticmethod
     def loss_fn(x_hat, mean, logvar, batch):
-
         @jax.vmap
         def kl_divergence(mean, logvar):
-            return -.5 * jnp.sum(1 + logvar - jnp.square(mean) - jnp.exp(logvar))
+            return -0.5 * jnp.sum(1 + logvar - jnp.square(mean) - jnp.exp(logvar))
 
         @jax.vmap
         def mse(logits, labels):
+            # Assumming that the distribution of the data is Gaussian, the log likelihood is simply a MSE
+            # $\log\,p(x \vert z_{q}(x))$
             return jnp.sum(jnp.square(logits - labels))
 
-
         return kl_divergence(mean, logvar) + mse(x_hat, batch)
-

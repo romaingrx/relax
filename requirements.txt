@@ -1,0 +1,4 @@
+jax
+optax
+dm-haiku
+einops

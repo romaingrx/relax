@@ -10,7 +10,6 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 
 
-
 @dataclass
 class Metric:
     name: str
@@ -27,6 +26,7 @@ class Metric:
 
     def reset(self):
         self.state = None
+
 
 class MeanMetric(Metric):
     def result(self):

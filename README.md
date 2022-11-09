@@ -5,7 +5,7 @@ RELAX
 
 RELAX is a library that requires a small setup overhead in order to train and use a model. Focus on the implementation of your models and RELAX takes care of the rest. 
 
-It follows the same syntax as the [haiku](https://github.com/deepmind/dm-haiku) and [optax](https://github.com/deepmind/optax), you just have to ```init``` the trainer params and then you can ```apply``` with your trained params the same way.
+It follows the same syntax as [haiku](https://github.com/deepmind/dm-haiku) and [optax](https://github.com/deepmind/optax), you just have to ```init``` the trainer params and then you can ```apply``` with your trained params the same way.
 
 The [```Trainer```](https://github.com/romaingrx/relax/blob/35ecb13d34016f65de8de27b0695f111330118d6/relax/trainer.py#L63) class can train your model in a single line, just define your model, your loss and pass them to the [train](https://github.com/romaingrx/relax/blob/35ecb13d34016f65de8de27b0695f111330118d6/relax/trainer.py#L80) method. It is possible to optimize the different steps of the training process, just pass the flags ```jit_update_step``` and/or ```jit_epoch_loop```.
 

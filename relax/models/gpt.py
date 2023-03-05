@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2023 February 03, 18:14:12
-@last modified : 2023 February 06, 17:32:42
+@last modified : 2023 March 03, 16:39:00
 """
 
 import jax
@@ -12,7 +12,7 @@ import haiku as hk
 import jax.numpy as jnp
 from functools import partial
 from dataclasses import dataclass
-from relax.models import MultiHeadAttention
+from relax.models import CausalSelfAttention
 
 from typing import Optional
 
@@ -39,8 +39,7 @@ class GPTBlock(hk.Module):
     
     def __call__(self, x):
         x = hk.LayerNorm(create_scale=True, create_offset=True, axis=-1)(x) # Normalize the batch
-        x = MultiHeadAttention(self.n_head, self.n_embed, name="SelfCausalAttention")(x, x, x).projection # Apply the self causal attention
-        print(x)
+        x = CausalSelfAttention(self.n_head, self.n_embed, name="SelfCausalAttention")(x).projection # Apply the self causal attention
         x += x # Skip connection
         x = hk.LayerNorm(create_scale=True, create_offset=True, axis=-1)(x) # Normalize the skipped connection
         x = MLP(self.n_embed, self.dropout_rate)(x)

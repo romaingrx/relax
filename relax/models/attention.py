@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2022 November 11, 17:43:12
-@last modified : 2022 November 21, 11:21:46
+@last modified : 2023 March 05, 13:21:23
 """
 
 import jax
@@ -62,3 +62,29 @@ class MultiHeadAttention(hk.Module):
                 projection=projection, 
                 attention_weights=attention_weights, 
                 )
+
+class SelfAttention(MultiHeadAttention):
+    def __init__(self, 
+            num_heads, 
+            embed_dim, 
+            w_init: Optional[hk.initializers.Initializer] = None, 
+            name: Optional[str] = None
+            ):
+        super().__init__(num_heads, embed_dim, w_init, name)
+
+    def __call__(self, x, mask = None):
+        return super().__call__(x, x, x, mask)
+
+# TODO: speedup masked matmul 
+class CausalSelfAttention(SelfAttention):
+    def __init__(self, 
+            num_heads, 
+            embed_dim, 
+            w_init: Optional[hk.initializers.Initializer] = None, 
+            name: Optional[str] = None
+            ):
+        super().__init__(num_heads, embed_dim, w_init, name)
+
+    def __call__(self, x):
+        mask = jnp.tril(jnp.ones((x.shape[1], x.shape[1]), dtype=x.dtype), k=0)
+        return super().__call__(x, mask)

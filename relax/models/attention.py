@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2022 November 11, 17:43:12
-@last modified : 2023 March 05, 13:21:23
+@last modified : 2023 March 08, 17:02:24
 """
 
 import jax
@@ -39,11 +39,11 @@ class MultiHeadAttention(hk.Module):
             keys (batch_size, sequence_length, embed_dim)
             values (batch_size, sequence_length, embed_dim)
         """
-        separate_heads_fct = jax.jit(lambda x: einops.rearrange(x, "b seq_length (num_heads key_size) -> b num_heads seq_length key_size", num_heads=self.num_heads))
+        q, k, v = jnp.split(hk.Linear(3 * self.embed_dim, w_init=self.w_init, name="c_attn")(query), 3, axis=-1)
 
-        query_heads = separate_heads_fct(hk.Linear(self.embed_dim, w_init=self.w_init, name="Q")(query)) # [batch, num_heads, sequence_length, key_size]
-        key_heads = separate_heads_fct(hk.Linear(self.embed_dim, w_init=self.w_init, name="K")(key)) # [batch, num_heads, sequence_length, key_size]        
-        value_heads = separate_heads_fct(hk.Linear(self.embed_dim, w_init=self.w_init, name="V")(value)) # [batch, num_heads, sequence_length, key_size]       
+        query_heads = einops.rearrange(q, "b s (h d) -> b h s d", h=self.num_heads) # [batch, num_heads, sequence_length, key_size]
+        key_heads = einops.rearrange(q, "b s (h d) -> b h s d", h=self.num_heads) # [batch, num_heads, sequence_length, key_size]        
+        value_heads = v = einops.rearrange(v, "b s (h d) -> b h s d", h=self.num_heads)
 
         attention_logits = jnp.einsum("bhsd,bhSd->bhsS", query_heads, key_heads) # Multiply each query heads by each key heads to get the attention map
         attention_logits /= jnp.sqrt(self.key_size) # Scale it with the square root of the key size
@@ -56,7 +56,7 @@ class MultiHeadAttention(hk.Module):
         attention = jnp.einsum("bhsS,bhSd->bshd", attention_weights, value_heads)
         attention = einops.rearrange(attention, "b s h d -> b s (h d)")
 
-        projection = hk.Linear(self.embed_dim, w_init=self.w_init, name="projection")(attention)
+        projection = hk.Linear(self.embed_dim, w_init=self.w_init, name="c_proj")(attention)
 
         return AttrDict(
                 projection=projection, 

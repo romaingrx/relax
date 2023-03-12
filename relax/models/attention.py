@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2022 November 11, 17:43:12
-@last modified : 2023 March 08, 17:02:25
+@last modified : 2023 March 12, 23:12:42
 """
 
 import jax
@@ -16,75 +16,95 @@ from relax.utils import AttrDict
 from typing import Optional
 from dataclasses import dataclass
 
+# TODO: create a faster operation for dot product attention (see deepspeed or the latest pytorch 2.0 implementation)
+
+@dataclass
 class MultiHeadAttention(hk.Module):
-    def __init__(self, 
-            num_heads, 
-            embed_dim, 
-            w_init: Optional[hk.initializers.Initializer] = None, 
-            name: Optional[str] = None
-            ):
-        super().__init__(name=name)
-
-        self.num_heads = num_heads
-        self.embed_dim = embed_dim
+    num_heads : int # The number of heads to divide the embed_dim into
+    embed_dim : int # The embedding dimension (d_model in the paper)
+    k_dim : Optional[int] = None # Dimension of the key projected space (default: embed_dim)
+    v_dim : Optional[int] = None # Dimension of the value projected space (default: embed_dim)
+    bias : Optional[bool] = False # Whether to use a bias in the linear layers
+    dropout : Optional[float] = 0.0 # Dropout regularization
+    name : Optional[str] = None
+    
+    def __call__(self, q, k, v, mask=None, training=False, return_attention=True):
         assert self.embed_dim % self.num_heads == 0, "The embed dimension should be divisible by the number of heads."
-        self.key_size = self.embed_dim // self.num_heads
-
-        self.w_init = w_init 
-
-
-    def __call__(self, query, key, value, mask = None):
-        """
-            queries (batch_size, sequence_length, embed_dim)
-            keys (batch_size, sequence_length, embed_dim)
-            values (batch_size, sequence_length, embed_dim)
-        """
-        q, k, v = jnp.split(hk.Linear(3 * self.embed_dim, w_init=self.w_init, name="c_attn")(query), 3, axis=-1)
-
-        query_heads = einops.rearrange(q, "b s (h d) -> b h s d", h=self.num_heads) # [batch, num_heads, sequence_length, key_size]
-        key_heads = einops.rearrange(q, "b s (h d) -> b h s d", h=self.num_heads) # [batch, num_heads, sequence_length, key_size]        
-        value_heads = einops.rearrange(v, "b s (h d) -> b h s d", h=self.num_heads) # [batch, num_heads, sequence_length, key_size]        
-
-        attention_logits = jnp.einsum("bhsd,bhSd->bhsS", query_heads, key_heads) # Multiply each query heads by each key heads to get the attention map
-        attention_logits /= jnp.sqrt(self.key_size) # Scale it with the square root of the key size
+        # Get a linear layer for the q, k, v at the same time
+        Q = hk.Linear(self.k_dim or self.embed_dim, with_bias=self.bias, name='q_attn') # Query with the same dimension as the key as specified in `Attention is all you need` paper (section 3.2.2)
+        K = hk.Linear(self.k_dim or self.embed_dim, with_bias=self.bias, name='k_attn')
+        V = hk.Linear(self.v_dim or self.embed_dim, with_bias=self.bias, name='v_attn')
+        # The last proj onto the embed dim
+        proj_w = hk.Linear(self.embed_dim, with_bias=self.bias, name='c_proj')
+        
+        q, k, v = Q(q), K(k), V(v)
+        q = rearrange(q, 'B T (h dk) -> B h T dk', h=self.num_heads) 
+        k = rearrange(k, 'B T (h dk) -> B h dk T', h=self.num_heads) # Switch the 2 last dim for the matmul with q
+        v = rearrange(v, 'B T (h dv) -> B h T dv', h=self.num_heads)
+        
+        key_size = self.embed_dim / self.num_heads
+        attn = (q @ k) * (1 / jnp.sqrt(key_size)) 
         if mask is not None:
-            # Set the False values to -∞ so that the softmax values will be set to 0
-            attention_logits = jnp.where(mask, attention_logits, jnp.finfo(attention_logits.dtype).min)
+            attn = jnp.where(mask, attn, float('-inf')) # Fill the non masked values with -inf
+        w = jax.nn.softmax(attn, -1) 
+        if training:
+            w = hk.dropout(hk.next_rng_key(), self.dropout, w)
+        y = w @ v # [B, h, T, d]
+        y = rearrange(y, 'B h T d -> B T (h d)')
+        logits = proj_w(y) # B T C
+        if training:
+            logits = hk.dropout(hk.next_rng_key(), self.dropout, logits)
 
-        attention_weights = jax.nn.softmax(attention_logits)
+        if return_attention:
+            return AttrDict(
+                    projection=logits, 
+                    attention_weights=w
+                    )
+        return logits
 
-        attention = jnp.einsum("bhsS,bhSd->bshd", attention_weights, value_heads)
-        attention = einops.rearrange(attention, "b s h d -> b s (h d)")
 
-        projection = hk.Linear(self.embed_dim, w_init=self.w_init, name="c_proj")(attention)
+@dataclass
+class SelfAttention(hk.Module):
+    num_heads : int # The number of heads to divide the embed_dim into
+    embed_dim : int # The embedding dimension (d_model in the paper)
+    bias : Optional[bool] = False # Whether to use a bias in the linear layers
+    dropout : Optional[float] = 0.0 # Dropout regularization
+    name : Optional[str] = None
+    
+    def __call__(self, x: jnp.ndarray, mask: Optional[jnp.ndarray] = None, training: bool = False, return_attention: bool = True):
+        assert self.embed_dim % self.num_heads == 0, "The embed dimension should be divisible by the number of heads."
+        # Get a linear layer for the q, k, v at the same time
+        qkv_w = hk.Linear(3 * self.embed_dim, with_bias=self.bias, name='c_attn')
+        # The last proj onto the embed dim
+        proj_w = hk.Linear(self.embed_dim, with_bias=self.bias, name='c_proj')
+        
+        q, k, v = jnp.split(qkv_w(x), 3, 2) # [B, T, C]
+        q = einops.rearrange(q, 'B T (h d) -> B h T d', h=self.num_heads) 
+        k = einops.rearrange(k, 'B T (h d) -> B h d T', h=self.num_heads) # Switch the 2 last dim for the matmul with q
+        v = einops.rearrange(v, 'B T (h d) -> B h T d', h=self.num_heads)
+        
+        key_size = self.embed_dim / self.num_heads # d_k
+        attn = (q @ k) * (1 / jnp.sqrt(key_size)) # [B, h, T, T]
+        if mask is not None:
+            attn = jnp.where(mask, attn, float('-inf')) # Fill the non masked values with -inf
+        w = jax.nn.softmax(attn, -1)  
+        if training:
+            w = hk.dropout(hk.next_rng_key(), self.dropout, w)
+        y = w @ v # [B, h, T, d]
+        y = einops.rearrange(y, 'B h T d -> B T (h d)') # Merge the head and the head dim
+        logits = proj_w(y) # [B, T, C]
+        if training:
+            logits = hk.dropout(hk.next_rng_key(), self.dropout, logits) 
+        if return_attention:
+            return AttrDict(
+                    projection=logits, 
+                    attention_weights=w, 
+                    )
+        return logits
 
-        return AttrDict(
-                projection=projection, 
-                attention_weights=attention_weights, 
-                )
-
-class SelfAttention(MultiHeadAttention):
-    def __init__(self, 
-            num_heads, 
-            embed_dim, 
-            w_init: Optional[hk.initializers.Initializer] = None, 
-            name: Optional[str] = None
-            ):
-        super().__init__(num_heads, embed_dim, w_init, name)
-
-    def __call__(self, x, mask = None):
-        return super().__call__(x, x, x, mask)
-
-# TODO: speedup masked matmul 
 class CausalSelfAttention(SelfAttention):
-    def __init__(self, 
-            num_heads, 
-            embed_dim, 
-            w_init: Optional[hk.initializers.Initializer] = None, 
-            name: Optional[str] = None
-            ):
-        super().__init__(num_heads, embed_dim, w_init, name)
-
-    def __call__(self, x):
-        mask = jnp.tril(jnp.ones((x.shape[1], x.shape[1]), dtype=x.dtype), k=0)
-        return super().__call__(x, mask)
+    def __call__(self, x: jnp.ndarray, training: bool = False, return_attention: bool = True):
+        _, T, _ = x.shape
+        # Build the causal mask (only attention on itself and past values)
+        mask = jnp.tril(jnp.ones((1, 1, T, T), dtype=bool))  
+        return super().__call__(x, mask=mask, training=training, return_attention=return_attention)

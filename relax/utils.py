@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2022 October 22, 17:40:37
-@last modified : 2023 March 08, 17:26:39
+@last modified : 2023 March 11, 11:11:03
 """
 
 import haiku as hk
@@ -42,5 +42,6 @@ def treedef_unflatten(tree, sep="/"):
     return unflattened_tree
 
 
-
-
+def context(rng=None, params=None, state=None):
+    from haiku._src import base
+    return base.new_context(rng=rng, params=params, state=state)

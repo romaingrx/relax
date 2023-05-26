@@ -3,7 +3,7 @@
 """
 @author : Romain Graux
 @date : 2022 November 11, 17:43:12
-@last modified : 2023 March 12, 23:12:42
+@last modified : 2023 May 26, 10:21:33
 """
 
 import jax
@@ -26,6 +26,7 @@ class MultiHeadAttention(hk.Module):
     v_dim : Optional[int] = None # Dimension of the value projected space (default: embed_dim)
     bias : Optional[bool] = False # Whether to use a bias in the linear layers
     dropout : Optional[float] = 0.0 # Dropout regularization
+    rotary_encoding : Optional[bool] = False # Whether to use rotary encoding
     name : Optional[str] = None
     
     def __call__(self, q, k, v, mask=None, training=False, return_attention=True):
@@ -41,6 +42,9 @@ class MultiHeadAttention(hk.Module):
         q = rearrange(q, 'B T (h dk) -> B h T dk', h=self.num_heads) 
         k = rearrange(k, 'B T (h dk) -> B h dk T', h=self.num_heads) # Switch the 2 last dim for the matmul with q
         v = rearrange(v, 'B T (h dv) -> B h T dv', h=self.num_heads)
+
+        if self.rotary_encoding:
+            raise NotImplementedError("Rotary encoding is not implemented yet.")
         
         key_size = self.embed_dim / self.num_heads
         attn = (q @ k) * (1 / jnp.sqrt(key_size)) 
@@ -69,6 +73,7 @@ class SelfAttention(hk.Module):
     embed_dim : int # The embedding dimension (d_model in the paper)
     bias : Optional[bool] = False # Whether to use a bias in the linear layers
     dropout : Optional[float] = 0.0 # Dropout regularization
+    rotary_encoding : Optional[bool] = False # Whether to use rotary encoding
     name : Optional[str] = None
     
     def __call__(self, x: jnp.ndarray, mask: Optional[jnp.ndarray] = None, training: bool = False, return_attention: bool = True):
@@ -82,6 +87,9 @@ class SelfAttention(hk.Module):
         q = einops.rearrange(q, 'B T (h d) -> B h T d', h=self.num_heads) 
         k = einops.rearrange(k, 'B T (h d) -> B h d T', h=self.num_heads) # Switch the 2 last dim for the matmul with q
         v = einops.rearrange(v, 'B T (h d) -> B h T d', h=self.num_heads)
+
+        if self.rotary_encoding:
+            raise NotImplementedError("Rotary encoding is not implemented yet.")
         
         key_size = self.embed_dim / self.num_heads # d_k
         attn = (q @ k) * (1 / jnp.sqrt(key_size)) # [B, h, T, T]
